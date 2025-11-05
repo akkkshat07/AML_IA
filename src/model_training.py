@@ -6,6 +6,7 @@ Author: Akshat
 
 import os
 import numpy as np
+import cv2
 from sklearn.metrics import classification_report, confusion_matrix
 
 # Handle TensorFlow imports with version compatibility
@@ -73,41 +74,103 @@ class MedicalImageClassifier:
             print(f"Error creating model: {e}")
             return None
     
-    def create_sample_data(self):
-        """Create sample data for demonstration purposes"""
-        print("Creating sample dataset for demonstration...")
+    def load_real_data(self, data_dir='data'):
+        """Load real X-ray images from directory structure"""
+        print("Loading real chest X-ray dataset...")
         
-        # Set seed for reproducibility
-        np.random.seed(42)
+        import os
+        from PIL import Image
+        import cv2
         
-        # Smaller dataset to avoid memory issues
-        train_size = 800
-        val_size = 100
-        test_size = 100
+        def load_images_from_folder(folder_path, label):
+            """Load all images from a folder with given label"""
+            images = []
+            labels = []
+            
+            if not os.path.exists(folder_path):
+                print(f"Warning: {folder_path} does not exist")
+                return images, labels
+            
+            file_count = 0
+            for filename in os.listdir(folder_path):
+                if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    img_path = os.path.join(folder_path, filename)
+                    try:
+                        # Load and resize image
+                        img = cv2.imread(img_path)
+                        if img is not None:
+                            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                            img = cv2.resize(img, (self.img_height, self.img_width))
+                            images.append(img)
+                            labels.append(label)
+                            file_count += 1
+                    except Exception as e:
+                        print(f"Error loading {filename}: {e}")
+            
+            print(f"  Loaded {file_count} images from {folder_path}")
+            return images, labels
         
-        # Generate synthetic X-ray-like images
-        X_train = np.random.randint(50, 200, (train_size, self.img_height, self.img_width, 3), dtype=np.uint8)
-        y_train = np.random.randint(0, 2, (train_size,))
+        # Get script directory and construct data paths
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_dir = os.path.dirname(script_dir)
+        data_path = os.path.join(project_dir, data_dir)
         
-        X_val = np.random.randint(50, 200, (val_size, self.img_height, self.img_width, 3), dtype=np.uint8)
-        y_val = np.random.randint(0, 2, (val_size,))
+        # Load training data
+        print("\nLoading training data...")
+        train_normal_imgs, train_normal_labels = load_images_from_folder(
+            os.path.join(data_path, 'train', 'NORMAL'), 0
+        )
+        train_pneumonia_imgs, train_pneumonia_labels = load_images_from_folder(
+            os.path.join(data_path, 'train', 'PNEUMONIA'), 1
+        )
         
-        X_test = np.random.randint(50, 200, (test_size, self.img_height, self.img_width, 3), dtype=np.uint8)
-        y_test = np.random.randint(0, 2, (test_size,))
+        # Load validation data
+        print("\nLoading validation data...")
+        val_normal_imgs, val_normal_labels = load_images_from_folder(
+            os.path.join(data_path, 'val', 'NORMAL'), 0
+        )
+        val_pneumonia_imgs, val_pneumonia_labels = load_images_from_folder(
+            os.path.join(data_path, 'val', 'PNEUMONIA'), 1
+        )
         
-        # Normalize pixel values
-        X_train = X_train.astype('float32') / 255.0
-        X_val = X_val.astype('float32') / 255.0
-        X_test = X_test.astype('float32') / 255.0
+        # Load test data
+        print("\nLoading test data...")
+        test_normal_imgs, test_normal_labels = load_images_from_folder(
+            os.path.join(data_path, 'test', 'NORMAL'), 0
+        )
+        test_pneumonia_imgs, test_pneumonia_labels = load_images_from_folder(
+            os.path.join(data_path, 'test', 'PNEUMONIA'), 1
+        )
         
-        print(f"Sample data created:")
+        # Combine and convert to numpy arrays
+        X_train = np.array(train_normal_imgs + train_pneumonia_imgs, dtype=np.float32) / 255.0
+        y_train = np.array(train_normal_labels + train_pneumonia_labels)
+        
+        X_val = np.array(val_normal_imgs + val_pneumonia_imgs, dtype=np.float32) / 255.0
+        y_val = np.array(val_normal_labels + val_pneumonia_labels)
+        
+        X_test = np.array(test_normal_imgs + test_pneumonia_imgs, dtype=np.float32) / 255.0
+        y_test = np.array(test_normal_labels + test_pneumonia_labels)
+        
+        # Shuffle training data
+        shuffle_idx = np.random.permutation(len(X_train))
+        X_train = X_train[shuffle_idx]
+        y_train = y_train[shuffle_idx]
+        
+        print(f"\n{'='*50}")
+        print("Dataset loaded successfully!")
+        print(f"{'='*50}")
         print(f"Training: {X_train.shape}, Labels: {y_train.shape}")
+        print(f"  - Normal: {np.sum(y_train == 0)}, Pneumonia: {np.sum(y_train == 1)}")
         print(f"Validation: {X_val.shape}, Labels: {y_val.shape}")
+        print(f"  - Normal: {np.sum(y_val == 0)}, Pneumonia: {np.sum(y_val == 1)}")
         print(f"Test: {X_test.shape}, Labels: {y_test.shape}")
+        print(f"  - Normal: {np.sum(y_test == 0)}, Pneumonia: {np.sum(y_test == 1)}")
+        print(f"{'='*50}\n")
         
         return (X_train, y_train), (X_val, y_val), (X_test, y_test)
     
-    def train_model(self, train_data, val_data, epochs=5):
+    def train_model(self, train_data, val_data, epochs=20):
         """Train the CNN model"""
         if self.model is None:
             print("Error: Model not created. Call create_model() first.")
@@ -120,14 +183,22 @@ class MedicalImageClassifier:
         
         try:
             # Calculate appropriate batch size
-            batch_size = min(32, len(X_train) // 4)
+            batch_size = 32
             
             # Callbacks
             callbacks = [
                 keras.callbacks.EarlyStopping(
                     monitor='val_loss',
-                    patience=3,
-                    restore_best_weights=True
+                    patience=4,
+                    restore_best_weights=True,
+                    verbose=1
+                ),
+                keras.callbacks.ReduceLROnPlateau(
+                    monitor='val_loss',
+                    factor=0.5,
+                    patience=2,
+                    verbose=1,
+                    min_lr=0.00001
                 )
             ]
             
@@ -297,13 +368,13 @@ def main():
         print("-" * 30)
         model.summary()
         
-        # Create sample data
+        # Load real dataset
         print("\nPreparing dataset...")
-        train_data, val_data, test_data = classifier.create_sample_data()
+        train_data, val_data, test_data = classifier.load_real_data()
         
         # Train model
         print("\nTraining model...")
-        classifier.train_model(train_data, val_data, epochs=3)
+        classifier.train_model(train_data, val_data, epochs=20)
         
         # Evaluate model
         print("\nEvaluating model...")
@@ -316,8 +387,8 @@ def main():
         print("\n" + "="*50)
         print("TRAINING COMPLETED!")
         print("="*50)
-        print("Note: This uses sample data for demonstration.")
-        print("Replace with real X-ray images for actual medical use.")
+        print("Model trained on real chest X-ray dataset.")
+        print("Model saved and ready for deployment!")
         
         return metrics
         
