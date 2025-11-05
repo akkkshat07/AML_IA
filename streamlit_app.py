@@ -193,7 +193,7 @@ def main():
         st.write("Trained on diverse chest X-ray dataset")
     
     with col5:
-        st.metric("Accuracy", "~89%")
+        st.metric("Accuracy", "~90%")
         st.write("Performance on test dataset")
     
     # Model architecture
